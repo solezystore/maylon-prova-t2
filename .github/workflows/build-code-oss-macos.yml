@@ -1,0 +1,89 @@
+# Prova T2 (Fase 0 do Maylon): quanto tempo leva montar o editor Code-OSS (VS Code de código aberto, licença MIT)
+# numa máquina macOS padrão do GitHub Actions. Nada aqui é privado: só compila o código público da Microsoft.
+name: T2 - montar Code-OSS (macOS arm64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      vscode_tag:
+        description: "Versão (tag) do VS Code a montar"
+        default: "1.146.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15 # máquina padrão Apple Silicon (grátis em repositório público)
+    timeout-minutes: 240
+    env:
+      VSCODE_ARCH: arm64
+      npm_config_arch: arm64
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      FOUNDRY_LOCAL_SKIP_INSTALL: "1"
+      VSCODE_SKIP_FOUNDRY_LOCAL_INSTALL: "1"
+      GYP_DEFINES: "kerberos_use_rtld=false"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # evita limite de downloads do GitHub (Electron, ripgrep...)
+    steps:
+      - name: Máquina (CPU, RAM, disco)
+        run: |
+          sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
+          sw_vers; xcode-select -p; df -h /
+
+      - name: Baixar o código do VS Code
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vscode
+          ref: ${{ inputs.vscode_tag }}
+          path: vscode
+          fetch-depth: 1
+
+      - name: Node (versão do .nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: vscode/.nvmrc
+
+      - name: Python (para módulos nativos)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar pnpm (versão do package.json)
+        working-directory: vscode
+        run: |
+          PNPM=$(node -p "require('./package.json').packageManager.split('@')[1]")
+          npm install -g "pnpm@$PNPM"
+          pnpm --version
+          python3 -m pip install setuptools
+
+      - name: Instalar dependências (pnpm install)
+        working-directory: vscode
+        run: |
+          for i in 1 2 3; do
+            pnpm install --frozen-lockfile && break
+            [ $i -eq 3 ] && { echo "pnpm install falhou 3 vezes" >&2; exit 1; }
+            echo "pnpm install falhou ($i), tentando de novo..."
+          done
+
+      - name: Compilar e montar o app (gulp vscode-darwin-arm64-min)
+        working-directory: vscode
+        run: pnpm run gulp vscode-darwin-arm64-min
+
+      - name: Empacotar o app
+        run: |
+          ls -la
+          APP=$(ls -d VSCode-darwin-arm64/*.app | head -1)
+          echo "App: $APP"; du -sh "$APP"
+          ditto -c -k --keepParent "$APP" code-oss-darwin-arm64.zip
+          ls -lh code-oss-darwin-arm64.zip
+          df -h /
+
+      - name: Guardar o app para download (7 dias)
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-oss-darwin-arm64-${{ inputs.vscode_tag }}
+          path: code-oss-darwin-arm64.zip
+          retention-days: 7
+          compression-level: 0
