@@ -67,6 +67,15 @@ jobs:
             echo "pnpm install falhou ($i), tentando de novo..."
           done
 
+      # O VS Code 1.146 espera a extensão Copilot embutida (a Microsoft a adiciona na montagem interna dela; ela não
+      # vem no código aberto). Sem ela, o passo "prepareBuiltInCopilotRipgrepShim" derruba a montagem DEPOIS do app
+      # já montado. Remendo (como o VSCodium faz): pular esse passo quando o Copilot embutido não existir.
+      - name: Remendo — pular preparo do Copilot embutido
+        working-directory: vscode
+        run: |
+          perl -0pi -e 's/throw new Error\(`\[prepareBuiltInCopilotRipgrepShim\] Copilot SDK directory not found/return console.warn(`[maylon] pulando preparo do Copilot embutido: SDK não encontrado/' build/lib/copilot.ts
+          grep -n "\[maylon\]" build/lib/copilot.ts || { echo "remendo não aplicou (o código mudou?)" >&2; exit 1; }
+
       - name: Compilar e montar o app (gulp vscode-darwin-arm64-min)
         working-directory: vscode
         run: pnpm run gulp vscode-darwin-arm64-min
